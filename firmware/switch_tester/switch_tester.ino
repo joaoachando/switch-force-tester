@@ -74,7 +74,7 @@ void loop() {
           stepper.move(80);
           f = scale.get_units(1);
         }
-        while (f > 0.1)
+        while (f > 0.05)
         {
           stepper.move(-8);
           delay(100);
@@ -93,13 +93,15 @@ void loop() {
         f = 0;
         pressed = 0;
         released = 0;
+        int stepsize = 16;
+        int fsize = 2;
 
         while (f < 125)
         {
-          z += 8;
-          stepper.move(8);
+          z += stepsize;
+          stepper.move(stepsize);
           delay(100);
-          f = scale.get_units(2);
+          f = scale.get_units(fsize);
           Serial.print('d'); Serial.print(z); Serial.print(':'); Serial.println(f);
           if (!pressed && !digitalRead(switchPin))
           {
@@ -112,10 +114,10 @@ void loop() {
 
         while (f > 0.1 && z > 0) 
         {
-          z -= 8;
-          stepper.move(-8);
+          z -= stepsize;
+          stepper.move(-stepsize);
           delay(100);
-          f = scale.get_units(2);
+          f = scale.get_units(fsize);
           Serial.print('u'); Serial.print(z); Serial.print(':'); Serial.println(f);
           if (!released && digitalRead(switchPin))
           {
