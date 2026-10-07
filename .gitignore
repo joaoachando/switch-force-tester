@@ -5,6 +5,6 @@
 node_modules
 
 # Ignore IDE files
-python-app/.idea
-python-app/.DS_store
+hardware/python-app/.idea
+hardware/python-app/.DS_store
 

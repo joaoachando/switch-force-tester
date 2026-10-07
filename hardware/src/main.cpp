@@ -1,13 +1,3 @@
-/*
-   Simple demo, should work with any driver board
-
-   Connect STEP, DIR as indicated
-
-   Copyright (C)2015-2017 Laurentiu Badea
-
-   This file may be redistributed under the terms of the MIT license.
-   A copy of this license has been included with this distribution in the file LICENSE.
-*/
 #include <Arduino.h>
 #include "BasicStepperDriver.h"
 #include "HX711.h"
