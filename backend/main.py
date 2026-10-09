@@ -31,31 +31,62 @@ def get_db():
 def read_switches(db: Session = Depends(get_db)):
     return db.query(Switch).all()
 
+
 @app.websocket("/ws/tester")
 async def websocket_tester(websocket: WebSocket):
     await websocket.accept()
 
-    # Send a command to the Arduino to start the stepper motor
-    if ser:
-        ser.write(b"START\n") # Adjust this string to match your Geekboards fork
+    # Background task to read from Arduino and send to Browser
+    async def serial_reader():
+        try:
+            while True:
+                if ser and ser.in_waiting > 0:
+                    line = ser.readline().decode('utf-8', errors='ignore').strip()
+                    if not line:
+                        continue
+
+                    # Parse Status Messages
+                    if line.startswith("<STATUS:"):
+                        status = line.replace("<STATUS:", "").replace(">", "")
+                        await websocket.send_json({"type": "status", "message": status})
+
+                    # Parse Data Points (e.g., DATA:d:1.250:45.30)
+                    elif line.startswith("DATA:"):
+                        parts = line.split(":")
+                        if len(parts) == 4:
+                            try:
+                                await websocket.send_json({
+                                    "type": "data",
+                                    "direction": parts[1],  # 'd', 'u', 'P', 'R'
+                                    "travel_mm": float(parts[2]),
+                                    "force_g": float(parts[3])
+                                })
+                            except ValueError:
+                                pass  # Ignore bad serial reads
+
+                await asyncio.sleep(0.005)  # Yield to event loop
+        except WebSocketDisconnect:
+            pass
+
+    # Start the reader task
+    reader_task = asyncio.create_task(serial_reader())
 
     try:
+        # Listen for commands FROM the browser
         while True:
-            # Read serial data without blocking the async event loop
-            if ser and ser.in_waiting > 0:
-                line = ser.readline().decode('utf-8').strip()
-                if line:
-                    # Stream the raw data point (e.g., "1.20,45.5") to the frontend chart
-                    await websocket.send_text(line)
-
-            # Yield control back to the event loop so the server stays responsive
-            await asyncio.sleep(0.01)
+            data = await websocket.receive_json()
+            if ser:
+                if data.get("command") == "start":
+                    ser.write(b's')
+                elif data.get("command") == "abort":
+                    ser.write(b'x')
 
     except WebSocketDisconnect:
-        print("Browser client disconnected")
-        # Safety catch: tell the Arduino to stop if the user closes the tab
+        print("Client disconnected")
+    finally:
+        reader_task.cancel()
         if ser:
-            ser.write(b"STOP\n")
+            ser.write(b'x')  # Abort motor if browser closes
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
