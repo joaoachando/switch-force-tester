@@ -5,7 +5,7 @@ import serial
 from time import sleep
 import json
 
-ser = serial.Serial('/dev/cu.usbserial-142210', 115200)
+ser = serial.Serial('COM4', 115200)
 sleep(2)
 
 fig, ax = plt.subplots()

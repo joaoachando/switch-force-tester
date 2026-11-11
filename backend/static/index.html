@@ -1,10 +1,304 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Switch Dashboard</title>
+  <meta charset="UTF-8">
+  <title>Switch Dashboard</title>
+  <link href="https://fonts.googleapis.com/css?family=Roboto:100,300,400,500,700,900" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@mdi/font@6.x/css/materialdesignicons.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/vuetify@3.5.8/dist/vuetify.min.css" rel="stylesheet">
+
+  <script src="https://achando.dev/shared/theme-sync.js"></script>
+
+  <style>
+    /* Cute material styling overrides */
+   .cute-card { border-radius: 16px !important; box-shadow: 0 4px 20px rgba(0,0,0,0.3) !important; }
+  </style>
 </head>
 <body>
-    <h1>It works!</h1>
-    <p>Welcome to the Keyboard Switch Database.</p>
+  <div id="app">
+    <v-app>
+      <v-app-bar color="surface" elevation="1">
+        <v-app-bar-title>Keyboard Switch Dashboard</v-app-bar-title>
+        <v-chip class="ma-2" :color="statusMessage === 'READY' || statusMessage === 'DONE' ? 'success' : (statusMessage === 'STARTING' ? 'warning' : 'error')" variant="flat">
+          {{ statusMessage }}
+        </v-chip>
+        <!-- NEW VUETIFY SELECTOR -->
+        <v-select
+          v-model="currentTheme"
+          :items="themeOptions"
+          item-title="label"
+          item-value="value"
+          density="compact"
+          hide-details
+          variant="outlined"
+          class="mx-4"
+          style="max-width: 180px;"
+          @update:model-value="changeTheme"
+        ></v-select>
+      </v-app-bar>
+      <v-main>
+        <v-container>
+          <v-row>
+            <!-- Control Panel -->
+            <v-col cols="12" md="4">
+              <v-card class="cute-card pa-4 mb-4">
+                <v-card-title>Tester Controls</v-card-title>
+                <v-card-text>
+                  <v-btn color="success" size="x-large" block class="mb-3 rounded-pill" @click="sendCommand('start')" :disabled="testing">
+                    <v-icon left>mdi-play</v-icon> Start Test
+                  </v-btn>
+                  <v-btn color="error" size="large" block variant="tonal" class="rounded-pill" @click="sendCommand('abort')">
+                    <v-icon left>mdi-stop</v-icon> Abort / Home
+                  </v-btn>
+                </v-card-text>
+              </v-card>
+
+              <!-- NEW CALIBRATION PANEL -->
+              <v-card class="cute-card pa-4">
+                <v-card-title class="text-subtitle-1 font-weight-bold">Hardware Calibration</v-card-title>
+                <v-card-text>
+                  <!-- Motor Tuning -->
+                  <v-text-field v-model="motorSpeed" label="Max Speed (steps/s)" type="number" density="compact" hide-details class="mb-2"></v-text-field>
+                  <v-text-field v-model="motorAccel" label="Acceleration" type="number" density="compact" hide-details class="mb-2"></v-text-field>
+                  <v-btn size="small" color="primary" variant="tonal" block class="mb-4" @click="updateMotor">Update Motor Profile</v-btn>
+
+                  <v-divider class="mb-4"></v-divider>
+
+                  <!-- Jog Controls -->
+                  <div class="d-flex align-center justify-space-between mb-4">
+                    <v-btn icon="mdi-chevron-up" color="secondary" variant="tonal" @click="sendCommand('jog', -jogSteps)"></v-btn>
+                    <v-text-field v-model="jogSteps" label="Jog Steps" type="number" density="compact" hide-details style="max-width: 100px;" class="mx-2"></v-text-field>
+                    <v-btn icon="mdi-chevron-down" color="secondary" variant="tonal" @click="sendCommand('jog', jogSteps)"></v-btn>
+                  </div>
+
+                  <v-divider class="mb-4"></v-divider>
+
+                  <!-- Sensor Debug -->
+                  <div class="d-flex justify-space-between mb-2">
+                    <v-btn size="small" @click="sendCommand('check_switch')">Read Switch</v-btn>
+                    <span class="text-caption font-weight-bold align-self-center">{{ debugSwitch }}</span>
+                  </div>
+                  <div class="d-flex justify-space-between mb-2">
+                    <v-btn size="small" @click="sendCommand('check_weight')">Read Weight</v-btn>
+                    <v-btn size="small" color="secondary" @click="sendCommand('read_raw')">Read Raw</v-btn>
+                    <span class="text-caption font-weight-bold align-self-center">{{ debugWeight }} gf</span>
+                  </div>
+                  <v-divider class="my-3"></v-divider>
+                  <v-btn size="small" color="secondary" block class="mb-2" @click="rawStream = []; sendCommand('stream_raw')">
+                    Stream Raw (Press Load Cell Now!)
+                  </v-btn>
+                  <div class="text-caption bg-grey-lighten-3 pa-2 rounded" style="min-height: 40px; word-break: break-all;">
+                    <span v-if="rawStream.length === 0">Click to stream, then push...</span>
+                    <span v-else>{{ rawStream.join(', ') }}</span>
+                  </div>
+                  <v-btn size="small" color="warning" block variant="tonal" @click="sendCommand('tare')">Tare Scale</v-btn>
+                </v-card-text>
+              </v-card>
+            </v-col>
+            <!-- Chart Panel -->
+            <v-col cols="12" md="8">
+              <v-card class="cute-card pa-2">
+                <div id="chart" style="width: 100%; height: 500px;"></div>
+              </v-card>
+            </v-col>
+          </v-row>
+        </v-container>
+      </v-main>
+    </v-app>
+  </div>
+
+  <!-- Scripts -->
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vuetify@3.5.8/dist/vuetify.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+
+  <script>
+    const { createApp, ref, onMounted } = Vue;
+    const { createVuetify, useTheme } = Vuetify;
+
+    // 1. ADD DRACULA TO VUETIFY
+    const vuetify = createVuetify({
+      theme: {
+        defaultTheme: 'catppuccin',
+        themes: {
+          catppuccin: { dark: true, colors: { background: '#1e1e2e', surface: '#313244', primary: '#89b4fa', success: '#a6e3a1', error: '#f38ba8', warning: '#f9e2af', secondary: '#b4befe' } },
+          nord: { dark: true, colors: { background: '#2e3440', surface: '#3b4252', primary: '#88c0d0', success: '#a3be8c', error: '#bf616a', warning: '#ebcb8b', secondary: '#81a1c1' } },
+          dracula: { dark: true, colors: { background: '#282a36', surface: '#44475a', primary: '#bd93f9', success: '#50fa7b', error: '#ff5555', warning: '#f1fa8c', secondary: '#ff79c6' } },
+          tokyonight: { dark: true, colors: { background: '#1a1b26', surface: '#24283b', primary: '#7aa2f7', success: '#9ece6a', error: '#f7768e', warning: '#e0af68', secondary: '#7dcfff' } },
+          latte: { dark: false, colors: { background: '#eff1f5', surface: '#e6e9ef', primary: '#1e66f5', success: '#40a02b', error: '#d20f39', warning: '#df8e1d', secondary: '#7287fd' } },
+          solarized: { dark: false, colors: { background: '#fdf6e3', surface: '#eee8d5', primary: '#268bd2', success: '#859900', error: '#dc322f', warning: '#b58900', secondary: '#2aa198' } }
+        }
+      }
+    });
+
+    createApp({
+      setup() {
+        const theme = useTheme();
+
+        // 2. SETUP DROPDOWN STATE
+        const currentTheme = ref('catppuccin');
+        const themeOptions = [
+          { label: '☕ Catppuccin', value: 'catppuccin' },
+          { label: '❄️ Nord', value: 'nord' },
+          { label: '🧛 Dracula', value: 'dracula' },
+          { label: '🏙️ Tokyo Night', value: 'tokyonight' },
+          { label: '🥛 Latte (Light)', value: 'latte' },
+          { label: '☀️ Solarized (Light)', value: 'solarized' }
+        ];
+
+        // 3. SYNC WITH GLOBAL SCRIPT
+        const match = document.cookie.match(/(?:^|; )theme=([^;]*)/);
+        if (match && themeOptions.some(t => t.value === match[1])) {
+          currentTheme.value = match[1];
+          theme.global.name.value = match[1];
+        }
+
+        window.addEventListener('themeChanged', (e) => {
+          currentTheme.value = e.detail;
+          theme.global.name.value = e.detail;
+          // Check if the newly selected theme is flagged as dark in Vuetify
+          const isDark = theme.global.current.value.dark;
+          initChart(isDark); // Re-render the chart with the new color scheme
+        });
+
+        const changeTheme = (newTheme) => {
+            window.setTheme(newTheme); // Calls shared script, which updates cookies and emits events
+        };
+
+        // Keep your exact WebSocket state variables
+        const socketConnected = ref(false);
+        const statusMessage = ref('DISCONNECTED');
+        const testing = ref(false);
+        const motorSpeed = ref(2000);
+        const motorAccel = ref(1500);
+        const jogSteps = ref(640);
+        const debugSwitch = ref('---');
+        const debugWeight = ref('---');
+        const rawStream = ref([]); // NEW
+        let ws = null;
+
+        // Data arrays for ECharts
+        let downData = [];
+        let upData = [];
+        let pressPoint = null;
+        let releasePoint = null;
+
+        let chart = null;
+        // Pass an isDark boolean to the chart initializer
+        const initChart = (isDark = true) => {
+          if (chart) {
+            chart.dispose(); // Destroy the old chart to clear old colors
+          }
+
+          // ECharts uses 'dark' for dark mode, and null for default light mode
+          chart = echarts.init(document.getElementById('chart'), false ? 'dark' : null, { backgroundColor: 'transparent' });
+
+          const option = {
+            title: { text: 'Force Curve', left: 'center' },
+            tooltip: { trigger: 'axis', formatter: (params) => `${params[0].data[0]} mm<br/>${params[0].data[1]} gf` },
+            grid: { left: '10%', right: '10%', bottom: '10%' },
+            xAxis: { type: 'value', name: 'Travel (mm)', nameLocation: 'middle', nameGap: 25 },
+            yAxis: { type: 'value', name: 'Force (gf)' },
+            series: [
+              { name: 'Down', type: 'line', smooth: true, color: '#e57373', data: downData || [] },
+              { name: 'Up', type: 'line', smooth: true, color: '#81c784', data: upData || [] },
+              { name: 'Actuation', type: 'scatter', symbolSize: 10, color: '#1976d2', data: (pressPoint||releasePoint) ? [pressPoint, releasePoint].filter(Boolean) : [] }
+            ]
+          };
+          chart.setOption(option);
+        };
+
+        const connectWebSocket = () => {
+          // Dynamically get the current host so it works via IP or your reverse proxy domain
+          const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+          ws = new WebSocket(`${protocol}//${window.location.host}/ws/tester`);
+
+          ws.onopen = () => {
+            socketConnected.value = true;
+            statusMessage.value = 'AWAITING_HARDWARE...'; // Changed from 'CONNECTED'
+          };
+
+         let lastDraw = 0;
+
+          ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === 'debug') {
+              if (data.sensor === 'SWITCH') debugSwitch.value = data.value;
+              if (data.sensor === 'WEIGHT') debugWeight.value = data.value;
+              if (data.sensor === 'WEIGHT_RAW') debugWeight.value = data.value + ' (RAW)';
+
+              // ADD THIS BLOCK:
+              if (data.sensor === 'RAW_STREAM') {
+                rawStream.value.push(data.value);
+              }
+            }
+
+            if (data.type === 'status') {
+              statusMessage.value = data.message;
+              if (data.message === 'STARTING') {
+                testing.value = true;
+                downData = []; upData = []; pressPoint = null; releasePoint = null;
+                chart.setOption({ series: [{ data: [] }, { data: [] }, { data: [] }] });
+              } else if (data.message === 'DONE' || data.message === 'ABORTED') {
+                testing.value = false;
+                // Force one final draw when finished to ensure no points were skipped
+                chart.setOption({ series: [{ data: downData }, { data: upData }, { data: pressPoint||releasePoint ? [pressPoint, releasePoint].filter(Boolean) : [] }] });
+              }
+            }
+
+            if (data.type === 'data') {
+              const point = [data.travel_mm, data.force_g];
+
+              if (data.direction === 'd') downData.push(point);
+              if (data.direction === 'u') upData.push(point);
+
+              let actuationData = pressPoint ? [pressPoint] : [];
+              if (data.direction === 'P') { pressPoint = point; actuationData.push(point); }
+              if (data.direction === 'R') { releasePoint = point; actuationData.push(point); }
+
+              // THROTTLE: Only update the visual chart every 50ms (20 FPS)
+              if (Date.now() - lastDraw > 50) {
+                chart.setOption({
+                  series: [{ data: downData }, { data: upData }, { data: actuationData }]
+                });
+                lastDraw = Date.now();
+              }
+            }
+          };
+
+          ws.onclose = () => {
+            socketConnected.value = false;
+            statusMessage.value = 'DISCONNECTED';
+            setTimeout(connectWebSocket, 3000); // Auto reconnect
+          };
+        };
+
+        const startMeasurement = () => ws.send(JSON.stringify({ command: 'start' }));
+        const abortMeasurement = () => ws.send(JSON.stringify({ command: 'abort' }));
+        const sendCommand = (cmd, val = null) => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ command: cmd, value: val }));
+            }
+          };
+
+        const updateMotor = () => {
+            sendCommand('set_speed', motorSpeed.value);
+            sendCommand('set_accel', motorAccel.value);
+          };
+        // Initialize the chart on mount, checking if the current loaded theme is dark
+        onMounted(() => {
+          const isDark = theme.global.current.value.dark;
+          initChart(isDark);
+          // connectWebSocket();
+          window.addEventListener('resize', () => { chart && chart.resize(); });
+        });
+
+        return {
+            currentTheme, themeOptions, changeTheme,
+            socketConnected, statusMessage, testing, startMeasurement, abortMeasurement, sendCommand, updateMotor, motorSpeed, motorAccel, jogSteps, debugSwitch, debugWeight, rawStream
+        }
+      }
+    }).use(vuetify).mount('#app');
+  </script>
 </body>
 </html>

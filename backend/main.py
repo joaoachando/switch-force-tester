@@ -36,57 +36,80 @@ def read_switches(db: Session = Depends(get_db)):
 async def websocket_tester(websocket: WebSocket):
     await websocket.accept()
 
-    # Background task to read from Arduino and send to Browser
+    if ser is None or not ser.is_open:
+        await websocket.send_json({"type": "status", "message": "ARDUINO_MISSING"})
+    else:
+        await websocket.send_json({"type": "status", "message": "READY"})
+
     async def serial_reader():
         try:
             while True:
                 if ser and ser.in_waiting > 0:
-                    line = ser.readline().decode('utf-8', errors='ignore').strip()
-                    if not line:
-                        continue
+                    try:
+                        line = ser.readline().decode('utf-8', errors='ignore').strip()
+                    except OSError:
+                        await websocket.send_json({"type": "status", "message": "USB_DISCONNECTED"})
+                        break
 
-                    # Parse Status Messages
+                    if not line: continue
+
                     if line.startswith("<STATUS:"):
-                        status = line.replace("<STATUS:", "").replace(">", "")
-                        await websocket.send_json({"type": "status", "message": status})
+                        await websocket.send_json({"type": "status", "message": line.strip("<>").split(":")[1]})
 
-                    # Parse Data Points (e.g., DATA:d:1.250:45.30)
+                    elif line.startswith("<DEBUG:"):
+                        # E.g., <DEBUG:SWITCH:OPEN (RELEASED)>
+                        parts = line.strip("<>").split(":")
+                        await websocket.send_json({"type": "debug", "sensor": parts[1], "value": parts[2]})
+
                     elif line.startswith("DATA:"):
                         parts = line.split(":")
                         if len(parts) == 4:
                             try:
                                 await websocket.send_json({
-                                    "type": "data",
-                                    "direction": parts[1],  # 'd', 'u', 'P', 'R'
-                                    "travel_mm": float(parts[2]),
-                                    "force_g": float(parts[3])
+                                    "type": "data", "direction": parts[1],
+                                    "travel_mm": float(parts[2]), "force_g": float(parts[3])
                                 })
                             except ValueError:
-                                pass  # Ignore bad serial reads
+                                pass
+                await asyncio.sleep(0.005)
+        except Exception as e:
+            print(f"Serial reader closed: {e}")
 
-                await asyncio.sleep(0.005)  # Yield to event loop
-        except WebSocketDisconnect:
-            pass
-
-    # Start the reader task
     reader_task = asyncio.create_task(serial_reader())
 
     try:
-        # Listen for commands FROM the browser
         while True:
             data = await websocket.receive_json()
-            if ser:
-                if data.get("command") == "start":
-                    ser.write(b's')
-                elif data.get("command") == "abort":
-                    ser.write(b'x')
+            if ser and ser.is_open:
+                cmd = data.get("command")
+                val = data.get("value", "")
 
-    except WebSocketDisconnect:
-        print("Client disconnected")
+                # Route commands to Arduino
+                if cmd == "start":
+                    ser.write(b"s\n")
+                elif cmd == "abort":
+                    ser.write(b"x\n")
+                elif cmd == "tare":
+                    ser.write(b"t\n")
+                elif cmd == "check_switch":
+                    ser.write(b"c\n")
+                elif cmd == "check_weight":
+                    ser.write(b"w\n")
+                elif cmd == "read_raw":
+                    ser.write(b"r\n")
+                elif cmd == "stream_raw":
+                    ser.write(b"R\n")
+                elif cmd == "jog":
+                    ser.write(f"j{val}\n".encode())
+                elif cmd == "set_speed":
+                    ser.write(f"v{val}\n".encode())
+                elif cmd == "set_accel":
+                    ser.write(f"a{val}\n".encode())
+            else:
+                await websocket.send_json({"type": "status", "message": "ARDUINO_MISSING"})
     finally:
         reader_task.cancel()
-        if ser:
-            ser.write(b'x')  # Abort motor if browser closes
+        if ser and ser.is_open: ser.write(b"x\n")
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
